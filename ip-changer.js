@@ -1,6 +1,9 @@
 #!/bin/bash
 
-[[ "$UID" -ne 0 ]] && { echo "Run as root"; exit 1; }
+[[ "$UID" -ne 0 ]] && {
+    echo "Run as root"
+    exit 1
+}
 
 TORRC="/etc/tor/torrc"
 SOCKS="socks5h://127.0.0.1:9050"
@@ -9,7 +12,7 @@ TIER1="{us},{gb},{ca},{de},{fr},{nl},{ch},{au},{jp},{sg}"
 
 install_packages() {
     apt update -y
-    apt install -y tor curl jq
+    apt install -y tor curl
 }
 
 configure_tor() {
@@ -20,38 +23,29 @@ configure_tor() {
     if [[ "$mode" == "tier1" ]]; then
         echo "ExitNodes $TIER1" >> "$TORRC"
         echo "StrictNodes 1" >> "$TORRC"
-        echo "[MODE] Tier-1"
+        echo "Mode: TIER-1"
     else
-        echo "[MODE] Random"
+        echo "Mode: RANDOM"
     fi
 
     systemctl reload tor
-    sleep 7
+    sleep 8
 }
 
 get_location() {
-    response=$(curl -s \
-        -x "$SOCKS" \
-        --max-time 20 \
-        "https://ipwho.is/")
+    ip=$(curl -s -x "$SOCKS" https://checkip.amazonaws.com)
 
-    # Validate JSON
-    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
-        echo "[!] GeoIP fetch failed"
-        return
-    fi
+    geo=$(curl -s -x "$SOCKS" https://ifconfig.co/geo)
 
-    success=$(jq -r '.success' <<< "$response")
-    [[ "$success" != "true" ]] && {
-        echo "[!] Invalid GeoIP response"
-        return
-    }
+    city=$(echo "$geo" | sed -n 's/.*"city":[[:space:]]*"\([^"]*\)".*/\1/p')
+    region=$(echo "$geo" | sed -n 's/.*"region_name":[[:space:]]*"\([^"]*\)".*/\1/p')
+    country=$(echo "$geo" | sed -n 's/.*"country_code":[[:space:]]*"\([^"]*\)".*/\1/p')
+    isp=$(echo "$geo" | sed -n 's/.*"asn_org":[[:space:]]*"\([^"]*\)".*/\1/p')
 
-    ip=$(jq -r '.ip // "N/A"' <<< "$response")
-    city=$(jq -r '.city // "N/A"' <<< "$response")
-    region=$(jq -r '.region // "N/A"' <<< "$response")
-    country=$(jq -r '.country_code // "N/A"' <<< "$response")
-    isp=$(jq -r '.isp // "Tor Exit"' <<< "$response")
+    city=${city:-N/A}
+    region=${region:-N/A}
+    country=${country:-N/A}
+    isp=${isp:-Tor Exit Relay}
 
     echo -e "\033[32mIP      : $ip"
     echo "City    : $city"
@@ -80,11 +74,9 @@ command -v tor >/dev/null || install_packages
 systemctl start tor
 
 clear
-echo "=========================================="
-echo " TOR IP ROTATOR"
-echo " 90% TIER-1 | 10% RANDOM"
-echo " ACCURATE LOCATION DISPLAY"
-echo "=========================================="
+echo "=============================================="
+echo " TOR IP CHANGER"
+echo "=============================================="
 
 read -rp "Interval (seconds): " interval
 read -rp "Times (0 = infinite): " times
