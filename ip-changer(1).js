@@ -1,114 +1,92 @@
 #!/bin/bash
 
-############################################
-# TOR IP CHANGER – CONTINUOUS MODE
-# IRAN (IR) EXCLUDED
-# CHANGE EVERY 3 SECONDS
-############################################
-
-# Must run as root
-if [[ "$UID" -ne 0 ]]; then
+[[ "$UID" -ne 0 ]] && {
     echo "Script must be run as root."
     exit 1
-fi
+}
 
 TORRC="/etc/tor/torrc"
-SOCKS_PROXY="socks5h://127.0.0.1:9050"
-IP_CHECK_URL="https://checkip.amazonaws.com"
 
-############################################
-# Install curl and tor
-############################################
+# Tier-1 country codes (edit if needed)
+TIER1_COUNTRIES="{us},{gb},{ca},{de},{fr},{nl},{ch},{au},{jp},{sg}"
+
 install_packages() {
-    distro=$(awk -F= '/^NAME/{print $2}' /etc/os-release | tr -d '"')
+    local distro
+    distro=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
+    distro=${distro//\"/}
 
     case "$distro" in
-        *Ubuntu*|*Debian*)
-            apt-get update -y
+        *"Ubuntu"* | *"Debian"*)
+            apt-get update
             apt-get install -y curl tor
             ;;
-        *Fedora*|*CentOS*|*Red\ Hat*|*Amazon*)
+        *"Fedora"* | *"CentOS"* | *"Red Hat"* | *"Amazon Linux"*)
             yum install -y curl tor
             ;;
-        *Arch*)
-            pacman -Sy --noconfirm curl tor
+        *"Arch"*)
+            pacman -S --noconfirm curl tor
             ;;
         *)
-            echo "Unsupported distribution: $distro"
+            echo "Unsupported distribution."
             exit 1
             ;;
     esac
 }
 
-############################################
-# Configure Tor to exclude Iran
-############################################
-configure_tor() {
-    if ! grep -q "ExcludeExitNodes" "$TORRC"; then
-        cat << EOF >> "$TORRC"
+configure_tor_tier1() {
+    echo "Configuring Tor for Tier-1 exit nodes only..."
 
-############ TOR GEO FILTER ############
-ExcludeExitNodes {ir}
+    cp "$TORRC" "$TORRC.bak.$(date +%F_%T)"
+
+    sed -i '/^ExitNodes/d;/^StrictNodes/d;/^ExcludeNodes/d' "$TORRC"
+
+    cat << EOF >> "$TORRC"
+
+## Tier-1 Country Exit Policy
+ExitNodes $TIER1_COUNTRIES
 StrictNodes 1
-#######################################
 EOF
-    fi
+
+    systemctl restart tor.service
+    sleep 5
 }
 
-############################################
-# Dependency check
-############################################
-if ! command -v curl >/dev/null || ! command -v tor >/dev/null; then
-    echo "Installing dependencies..."
+if ! command -v curl &>/dev/null || ! command -v tor &>/dev/null; then
     install_packages
 fi
 
-############################################
-# Tor setup
-############################################
-configure_tor
+configure_tor_tier1
 
-systemctl enable tor >/dev/null 2>&1
-
-if systemctl is-active --quiet tor; then
-    systemctl reload tor
-else
-    systemctl start tor
-fi
-
-############################################
-# Get current IP
-############################################
 get_ip() {
-    curl -s -x "$SOCKS_PROXY" "$IP_CHECK_URL"
+    curl -s -x socks5h://127.0.0.1:9050 https://checkip.amazonaws.com
 }
 
-############################################
-# Change IP
-############################################
 change_ip() {
-    systemctl reload tor
-    sleep 1
-    echo -e "\033[32m[+] New Tor IP: $(get_ip)\033[0m"
+    echo "Reloading Tor (Tier-1 exits only)"
+    systemctl reload tor.service
+    sleep 5
+    echo -e "\033[32mNew IP: $(get_ip)\033[0m"
 }
 
-############################################
-# Banner
-############################################
 clear
-cat << "EOF"
-========================================
- TOR CONTINUOUS IP CHANGER
- IRAN EXIT NODES EXCLUDED
- INTERVAL: 3 SECONDS
- Press CTRL+C to stop
-========================================
-EOF
+echo "======================================"
+echo "  TOR IP CHANGER (TIER-1 COUNTRIES)"
+echo "======================================"
 
-############################################
-# Infinite loop (3 seconds)
-############################################
 while true; do
-    change_ip
-    sleep 3
+    read -rp "Enter interval (seconds, 0 = infinite): " interval
+    read -rp "Enter times (0 = infinite): " times
+
+    if [[ "$interval" -eq 0 || "$times" -eq 0 ]]; then
+        echo "Infinite Tier-1 IP rotation started"
+        while true; do
+            change_ip
+            sleep "$(shuf -i 10-20 -n 1)"
+        done
+    else
+        for ((i=1; i<=times; i++)); do
+            change_ip
+            sleep "$interval"
+        done
+    fi
 done
