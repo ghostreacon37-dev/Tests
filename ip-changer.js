@@ -1,13 +1,16 @@
 #!/bin/bash
 
-[[ "$UID" -ne 0 ]] && {
-    echo "Run as root."
-    exit 1
-}
+[[ "$UID" -ne 0 ]] && { echo "Run as root"; exit 1; }
 
 TORRC="/etc/tor/torrc"
+SOCKS="socks5h://127.0.0.1:9050"
 
 TIER1="{us},{gb},{ca},{de},{fr},{nl},{ch},{au},{jp},{sg}"
+
+install_packages() {
+    apt update -y
+    apt install -y tor curl jq
+}
 
 configure_tor() {
     local mode="$1"
@@ -15,21 +18,46 @@ configure_tor() {
     sed -i '/^ExitNodes/d;/^StrictNodes/d' "$TORRC"
 
     if [[ "$mode" == "tier1" ]]; then
-        cat << EOF >> "$TORRC"
-ExitNodes $TIER1
-StrictNodes 1
-EOF
-        echo "Using Tier-1 exit nodes"
+        echo "ExitNodes $TIER1" >> "$TORRC"
+        echo "StrictNodes 1" >> "$TORRC"
+        echo "[MODE] Tier-1"
     else
-        echo "Using RANDOM exit nodes"
+        echo "[MODE] Random"
     fi
 
     systemctl reload tor
-    sleep 5
+    sleep 7
 }
 
-get_ip() {
-    curl -s -x socks5h://127.0.0.1:9050 https://ipinfo.io | grep -E '"ip"|"country"'
+get_location() {
+    response=$(curl -s \
+        -x "$SOCKS" \
+        --max-time 20 \
+        "https://ipwho.is/")
+
+    # Validate JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "[!] GeoIP fetch failed"
+        return
+    fi
+
+    success=$(jq -r '.success' <<< "$response")
+    [[ "$success" != "true" ]] && {
+        echo "[!] Invalid GeoIP response"
+        return
+    }
+
+    ip=$(jq -r '.ip // "N/A"' <<< "$response")
+    city=$(jq -r '.city // "N/A"' <<< "$response")
+    region=$(jq -r '.region // "N/A"' <<< "$response")
+    country=$(jq -r '.country_code // "N/A"' <<< "$response")
+    isp=$(jq -r '.isp // "Tor Exit"' <<< "$response")
+
+    echo -e "\033[32mIP      : $ip"
+    echo "City    : $city"
+    echo "Region  : $region"
+    echo "Country : $country"
+    echo "ISP     : $isp\033[0m"
 }
 
 change_ip() {
@@ -42,16 +70,24 @@ change_ip() {
     fi
 
     echo "-----------------------------"
-    get_ip
+    get_location
     echo "-----------------------------"
 }
 
+# -------- START --------
+
+command -v tor >/dev/null || install_packages
+systemctl start tor
+
+clear
 echo "=========================================="
-echo " TOR IP ROTATION (90% TIER-1 / 10% RANDOM)"
+echo " TOR IP ROTATOR"
+echo " 90% TIER-1 | 10% RANDOM"
+echo " ACCURATE LOCATION DISPLAY"
 echo "=========================================="
 
-read -rp "Interval in seconds: " interval
-read -rp "Number of changes (0 = infinite): " times
+read -rp "Interval (seconds): " interval
+read -rp "Times (0 = infinite): " times
 
 if [[ "$times" -eq 0 ]]; then
     while true; do
