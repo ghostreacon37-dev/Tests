@@ -16,7 +16,7 @@ if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
 
 // Configuration object
 const config = {
-  targetURL: process.env.TARGET_URL || 'https://example.com',
+  targetURL: process.env.TARGET_URL || 'https://learnblogs.online',
   profilesDir: PROFILES_DIR,
   logsDir: LOGS_DIR,
   
